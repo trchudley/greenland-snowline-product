@@ -1,0 +1,1 @@
+Mouginot and Rignot (2019) basins clipped to PROMICE-2022 mask. 'Simplified' geometries have been simplified to a tolerance of 200 m using geopandas simplify() function.

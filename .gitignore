@@ -1,0 +1,7 @@
+
+.DS_Store
+
+# ignore test_noteoboks dir
+test_notebooks/
+MOD10A1.061/
+MOD10A1.061_raw/

@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Greenland Snowline Explorer</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/flatgeobuf@3.34.0/dist/flatgeobuf-geojson.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: #fff;
+      color: #24292f;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 0.45rem 1rem;
+      background: #f6f8fa;
+      border-bottom: 1px solid #d0d7de;
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      flex-shrink: 0;
+    }
+
+    header h1 { font-size: 0.95rem; font-weight: 600; }
+    label { font-size: 0.82rem; color: #57606a; }
+
+    select {
+      padding: 0.2rem 0.45rem;
+      border: 1px solid #d0d7de;
+      border-radius: 3px;
+      font-size: 0.82rem;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    .btn {
+      padding: 0.2rem 0.55rem;
+      border: 1px solid #d0d7de;
+      border-radius: 3px;
+      font-size: 0.8rem;
+      background: #fff;
+      cursor: pointer;
+      color: #24292f;
+    }
+    .btn:hover { background: #f6f8fa; }
+
+    #status { font-size: 0.75rem; color: #888; margin-left: auto; margin-right: 0.3rem; }
+
+    #map { flex: 1; }
+
+    #panel {
+      position: fixed;
+      top: 38px; right: 0;
+      width: 360px;
+      height: calc(100vh - 38px);
+      background: #fff;
+      border-left: 1px solid #d0d7de;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.2s ease;
+      z-index: 1000;
+    }
+    #panel.open { transform: translateX(0); }
+
+    #panel-header {
+      padding: 0.4rem 0.8rem;
+      background: #f6f8fa;
+      border-bottom: 1px solid #d0d7de;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-shrink: 0;
+    }
+    #panel-title { font-size: 0.88rem; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    #panel-body { flex: 1; overflow-y: auto; padding: 0.8rem; display: flex; flex-direction: column; gap: 0.75rem; }
+    .chart-wrap { position: relative; height: 185px; }
+    .chart-label { font-size: 0.7rem; color: #888; text-align: center; }
+    #panel-loading { color: #888; font-size: 0.85rem; text-align: center; padding: 2rem 0; }
+
+    #dl-control {
+      background: #fff;
+      border: 1px solid #d0d7de !important;
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 0.78rem;
+      line-height: 1.9;
+      box-shadow: none !important;
+    }
+    #dl-control strong { display: block; color: #57606a; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 1px; }
+    #dl-control a { display: block; color: #0969da; text-decoration: none; }
+    #dl-control a:hover { text-decoration: underline; }
+
+    #modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.35);
+      z-index: 2000;
+      align-items: center;
+      justify-content: center;
+    }
+    #modal-overlay.open { display: flex; }
+    #modal-box {
+      background: #fff;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      padding: 1.4rem 1.8rem;
+      max-width: 520px;
+      width: 90%;
+      font-size: 0.85rem;
+      line-height: 1.65;
+    }
+    #modal-box h2 { font-size: 1rem; margin-bottom: 0.75rem; }
+    #modal-box p { margin-bottom: 0.6rem; }
+    #modal-box a { color: #0969da; }
+    #modal-box .warning {
+      background: #fff8c5;
+      border-left: 3px solid #d4a72c;
+      padding: 0.5rem 0.8rem;
+      border-radius: 2px;
+      margin-bottom: 0.7rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Greenland Snowline Explorer</h1>
+  <label for="layer-select">Layer:</label>
+  <select id="layer-select">
+    <option value="greenland">Greenland</option>
+    <option value="regions">Regions</option>
+    <option value="basins">Basins</option>
+  </select>
+  <span id="status">Loading&hellip;</span>
+  <button class="btn" id="info-btn">&#x24D8; Info / Warning</button>
+</header>
+
+<!-- Info modal -->
+<div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-heading">
+  <div id="modal-box">
+    <h2 id="modal-heading">About this dataset</h2>
+    <div class="warning">
+      <strong>Experimental data &mdash; not recommended for research use.</strong>
+      This website is a prototype for testing data delivery and visualisation.
+      Snowline and bare-ice extent values are experimental, have not been peer-reviewed, and
+      should not be used in published research.
+    </div>
+    <p>
+      <strong>Copyright &copy; Tom Chudley, University of Bristol.</strong>
+    </p>
+    <p>
+      Snowline elevations and bare-ice extents are derived from
+      <strong>MODIS Terra MOD10A1 v6.1</strong> daily snow-cover data
+      (Hall &amp; Riggs, 2021, NASA NSIDC DAAC), following an adapted method of
+      <strong>Ryan et al. (2019, <em>Science Advances</em>)</strong>.
+      Basin and region boundaries follow <strong>Mouginot &amp; Rignot (2019)</strong>.
+      Background map tiles &copy;&nbsp;<a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>
+      contributors, &copy;&nbsp;<a href="https://carto.com/" target="_blank">CARTO</a>.
+    </p>
+    <p>
+      Questions or feedback?
+      <a href="mailto:tom.chudley@bristol.ac.uk">tom.chudley@bristol.ac.uk</a>
+    </p>
+    <button class="btn" id="modal-close" style="margin-top:0.8rem">Close</button>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<!-- Side panel -->
+<div id="panel">
+  <div id="panel-header">
+    <span id="panel-title">&mdash;</span>
+    <a id="dl-csv" href="#" download
+       style="font-size:0.78rem;color:#0969da;text-decoration:none;white-space:nowrap"
+       title="Download CSV for this feature">&#x2B07; CSV</a>
+    <button class="btn" id="panel-close" aria-label="Close">&#x2715;</button>
+  </div>
+  <div id="panel-body">
+    <div id="panel-loading">Click a polygon to load data.</div>
+    <div class="chart-wrap"><canvas id="chart-snowline"></canvas></div>
+    <div class="chart-label">Snowline elevation &mdash; 90th percentile (m a.s.l.)</div>
+    <div class="chart-wrap"><canvas id="chart-extent"></canvas></div>
+    <div class="chart-label">Bare ice extent (km&sup2;)</div>
+  </div>
+</div>
+
+<script>
+  // ---------------------------------------------------------------------------
+  // Map
+  // ---------------------------------------------------------------------------
+  const map = L.map('map', { center: [72, -40], zoom: 4, preferCanvas: false });
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '\u00a9 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, \u00a9 <a href="https://carto.com/">CARTO</a>',
+    maxZoom: 19,
+  }).addTo(map);
+
+  // ---------------------------------------------------------------------------
+  // Download-all control (bottom-right of map)
+  // ---------------------------------------------------------------------------
+  const dlControl = L.control({ position: 'bottomright' });
+  dlControl.onAdd = () => {
+    const div = L.DomUtil.create('div', 'leaflet-control');
+    div.id = 'dl-control';
+    div.innerHTML =
+      '<strong>Download all data</strong>' +
+      '<a id="dl-all-snowlines" href="#">Snowlines CSV</a>' +
+      '<a id="dl-all-extents"   href="#">Extents CSV</a>';
+    L.DomEvent.disableClickPropagation(div);
+    return div;
+  };
+  dlControl.addTo(map);
+
+  // ---------------------------------------------------------------------------
+  // Layer config
+  // ---------------------------------------------------------------------------
+  const FGB_BASE  = '../data/assets/';
+  const DATA_BASE = '../data/';
+
+  const LAYERS = {
+    greenland : { file: 'vector_greenland_simplified.fgb', tooltip: null,     csvDir: 'total',   nameKey: null,     allPrefix: '_all_total'   },
+    regions   : { file: 'vector_regions_simplified.fgb',  tooltip: 'REGION', csvDir: 'regions', nameKey: 'REGION', allPrefix: '_all_regions' },
+    basins    : { file: 'vector_basins_simplified.fgb',   tooltip: 'BASIN',  csvDir: 'basins',  nameKey: 'BASIN',  allPrefix: '_all_basins'  },
+  };
+
+  const STYLES = {
+    default  : { color: '#1a56db', weight: 1.5, fillColor: '#1a56db', fillOpacity: 0.08 },
+    regions  : { color: '#b45309', weight: 1.5, fillColor: '#b45309', fillOpacity: 0.08 },
+    basins   : { color: '#047857', weight: 0.8, fillColor: '#047857', fillOpacity: 0.06 },
+    highlight: { color: '#111',   weight: 2.5, fillColor: '#111',    fillOpacity: 0.18 },
+  };
+
+  const styleFor = key => STYLES[key] ?? STYLES.default;
+
+  let currentLayer    = null;
+  let currentLayerKey = 'greenland';
+  let activeFeature   = null;
+  const statusEl      = document.getElementById('status');
+
+  function updateDlControl(key) {
+    const cfg = LAYERS[key];
+    const dir = DATA_BASE + cfg.csvDir + '/';
+    const slA = document.getElementById('dl-all-snowlines');
+    const exA = document.getElementById('dl-all-extents');
+    slA.href     = dir + cfg.allPrefix + '_snowlines.csv';
+    slA.download = cfg.allPrefix + '_snowlines.csv';
+    exA.href     = dir + cfg.allPrefix + '_extents.csv';
+    exA.download = cfg.allPrefix + '_extents.csv';
+  }
+
+  async function loadLayer(key) {
+    statusEl.textContent = 'Loading\u2026';
+    closePanel();
+    if (currentLayer) { map.removeLayer(currentLayer); currentLayer = null; }
+    currentLayerKey = key;
+    updateDlControl(key);
+
+    const cfg = LAYERS[key];
+    try {
+      const resp = await fetch(FGB_BASE + cfg.file);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const features = [];
+      for await (const f of flatgeobuf.deserialize(resp.body)) features.push(f);
+
+      currentLayer = L.geoJSON({ type: 'FeatureCollection', features }, {
+        style: () => ({ ...styleFor(key) }),
+        onEachFeature(feature, flayer) {
+          if (cfg.tooltip && feature.properties?.[cfg.tooltip] != null)
+            flayer.bindTooltip(String(feature.properties[cfg.tooltip]), { sticky: true });
+          flayer.on('click', () => onFeatureClick(feature, flayer));
+        },
+      }).addTo(map);
+
+      statusEl.textContent = features.length + ' feature(s) loaded';
+    } catch (err) {
+      statusEl.textContent = 'Error: ' + err.message;
+      console.error(err);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Feature click -> CSV -> panel
+  // ---------------------------------------------------------------------------
+  async function onFeatureClick(feature, flayer) {
+    const cfg = LAYERS[currentLayerKey];
+    if (activeFeature && activeFeature !== flayer) currentLayer.resetStyle(activeFeature);
+    activeFeature = flayer;
+    flayer.setStyle(STYLES.highlight);
+
+    const csvName = currentLayerKey === 'greenland'
+      ? 'GREENLAND'
+      : feature.properties?.[cfg.nameKey];
+    if (!csvName) { statusEl.textContent = 'No name found for feature.'; return; }
+
+    const csvUrl = DATA_BASE + cfg.csvDir + '/' + csvName + '.csv';
+    const dlCsv  = document.getElementById('dl-csv');
+    dlCsv.href     = csvUrl;
+    dlCsv.download = csvName + '.csv';
+
+    openPanel(csvName);
+    try {
+      const text = await fetch(csvUrl).then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      });
+      renderCharts(parseCSV(text));
+    } catch (err) {
+      document.getElementById('panel-loading').textContent = 'Failed to load data: ' + err.message;
+      console.error(err);
+    }
+  }
+
+  function parseCSV(text) {
+    const lines = text.trim().split('\n');
+    const h  = lines[0].split(',');
+    const yi = h.indexOf('year'), si = h.indexOf('percentile_90'), ei = h.indexOf('extent');
+    const years = [], snowlines = [], extents = [];
+    for (let i = 1; i < lines.length; i++) {
+      const c = lines[i].split(',');
+      years.push(Number(c[yi]));
+      snowlines.push(c[si] === '' ? null : Number(c[si]));
+      const e = c[ei] === '' ? null : Number(c[ei]);
+      extents.push(e === null ? null : e / 1e6);
+    }
+    return { years, snowlines, extents };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Panel
+  // ---------------------------------------------------------------------------
+  const panel        = document.getElementById('panel');
+  const panelTitle   = document.getElementById('panel-title');
+  const panelLoading = document.getElementById('panel-loading');
+
+  document.getElementById('panel-close').addEventListener('click', closePanel);
+
+  function openPanel(title) {
+    panelTitle.textContent = title;
+    panelLoading.textContent = 'Loading data\u2026';
+    panelLoading.style.display = 'block';
+    document.getElementById('chart-snowline').style.visibility = 'hidden';
+    document.getElementById('chart-extent').style.visibility  = 'hidden';
+    panel.classList.add('open');
+  }
+
+  function closePanel() {
+    panel.classList.remove('open');
+    if (activeFeature) { currentLayer?.resetStyle(activeFeature); activeFeature = null; }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Charts
+  // ---------------------------------------------------------------------------
+  let chartSnowline = null;
+  let chartExtent   = null;
+
+  const CHART_OPTS = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { maxTicksLimit: 8 }, grid: { color: '#eee' } },
+      y: { grid: { color: '#eee' } },
+    },
+  };
+
+  function renderCharts({ years, snowlines, extents }) {
+    panelLoading.style.display = 'none';
+    document.getElementById('chart-snowline').style.visibility = 'visible';
+    document.getElementById('chart-extent').style.visibility   = 'visible';
+    const labels = years.map(String);
+
+    if (chartSnowline) chartSnowline.destroy();
+    chartSnowline = new Chart(document.getElementById('chart-snowline'), {
+      type: 'line',
+      data: { labels, datasets: [{ data: snowlines,
+        borderColor: '#1a56db', backgroundColor: 'rgba(26,86,219,0.07)',
+        pointRadius: 2, spanGaps: true, fill: true, tension: 0.2 }] },
+      options: { ...CHART_OPTS, scales: { ...CHART_OPTS.scales,
+        y: { ...CHART_OPTS.scales.y, title: { display: true, text: 'Elevation (m)' } } } },
+    });
+
+    if (chartExtent) chartExtent.destroy();
+    chartExtent = new Chart(document.getElementById('chart-extent'), {
+      type: 'line',
+      data: { labels, datasets: [{ data: extents,
+        borderColor: '#047857', backgroundColor: 'rgba(4,120,87,0.07)',
+        pointRadius: 2, spanGaps: true, fill: true, tension: 0.2 }] },
+      options: { ...CHART_OPTS, scales: { ...CHART_OPTS.scales,
+        y: { ...CHART_OPTS.scales.y, title: { display: true, text: 'Extent (km\u00b2)' } } } },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Info modal
+  // ---------------------------------------------------------------------------
+  const modalOverlay = document.getElementById('modal-overlay');
+  document.getElementById('info-btn').addEventListener('click',    () => modalOverlay.classList.add('open'));
+  document.getElementById('modal-close').addEventListener('click', () => modalOverlay.classList.remove('open'));
+  modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) modalOverlay.classList.remove('open'); });
+
+  // ---------------------------------------------------------------------------
+  // Init
+  // ---------------------------------------------------------------------------
+  document.getElementById('layer-select').addEventListener('change', e => loadLayer(e.target.value));
+  loadLayer('greenland');
+</script>
+
+</body>
+</html>
